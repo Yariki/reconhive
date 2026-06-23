@@ -399,3 +399,24 @@ pip install -r requirements.txt && ./run_api.sh
 # frontend
 cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
+
+## GeoIP / ASN enrichment
+
+ReconHive can enrich globally routable hosts with MaxMind GeoLite2 City and ASN
+data. The app reads binary `.mmdb` paths from:
+
+```bash
+RECONHIVE_GEOIP_CITY_DB=data/geoip/GeoLite2-City.mmdb
+RECONHIVE_GEOIP_ASN_DB=data/geoip/GeoLite2-ASN.mmdb
+```
+
+Download/update the local databases with your MaxMind account credentials:
+
+```bash
+export RECONHIVE_MAXMIND_ACCOUNT_ID=your_account_id
+export RECONHIVE_MAXMIND_LICENSE_KEY=your_license_key
+scripts/download_geoip_dbs.sh
+```
+
+For Docker Compose, the same host directory is mounted into the API container at
+`/geoip`, and compose sets the container paths automatically.

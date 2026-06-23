@@ -1,6 +1,7 @@
 """Enrichment orchestrator: combine IP classification + GeoIP for a host, and
 fetch TLS certs for TLS-bearing services. Kept async + injectable for testing.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -62,3 +63,7 @@ class Enricher:
         if not self._tls_enabled:
             return None
         return await fetch_tls_cert(ip, port, server_name=server_name)
+
+    def close(self) -> None:
+        if self._geoip is not None:
+            self._geoip.close()

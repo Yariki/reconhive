@@ -5,4 +5,4 @@ asyncpg>=0.29
 alembic>=1.13
 pydantic-settings>=2.0
 cryptography>=42.0
-# optional: geoip2  (enables GeoIP/ASN enrichment with MaxMind GeoLite2 .mmdb)
+geoip2>=5.0

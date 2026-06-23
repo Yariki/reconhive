@@ -1,4 +1,5 @@
 """Scan job lifecycle: plan, list, get, run."""
+
 from __future__ import annotations
 
 import uuid
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.models import AuditAction, AuditLog, Engagement, JobStatus, ScanJob
 from ...db.session import SessionFactory
+from ...enrich import build_enricher
 from ...scan.runner import ScanRunner
 from ...scope.exceptions import OutOfScopeError, ScopeError
 from ...scope.service import EngagementInactiveError, JobTooLargeError, ScopeService
@@ -28,16 +30,24 @@ from ..schemas import ScanJobCreate, ScanJobOut
 router = APIRouter(tags=["jobs"])
 
 
-@router.post("/engagements/{engagement_id}/jobs", response_model=ScanJobOut,
-             status_code=status.HTTP_201_CREATED)
-async def plan_job(body: ScanJobCreate,
-                   eng: Engagement = Depends(get_engagement),
-                   session: AsyncSession = Depends(get_session)):
+@router.post(
+    "/engagements/{engagement_id}/jobs",
+    response_model=ScanJobOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def plan_job(
+    body: ScanJobCreate,
+    eng: Engagement = Depends(get_engagement),
+    session: AsyncSession = Depends(get_session),
+):
     params = {"ports": body.ports} if body.ports else {}
     try:
         job = await ScopeService(session).plan_job(
-            eng.id, body.job_type, body.targets,
-            requested_by=body.requested_by, params=params,
+            eng.id,
+            body.job_type,
+            body.targets,
+            requested_by=body.requested_by,
+            params=params,
         )
     except (OutOfScopeError,) as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -54,10 +64,13 @@ async def plan_job(body: ScanJobCreate,
 
 
 @router.get("/engagements/{engagement_id}/jobs", response_model=list[ScanJobOut])
-async def list_jobs(eng: Engagement = Depends(get_engagement),
-                    session: AsyncSession = Depends(get_session)):
+async def list_jobs(
+    eng: Engagement = Depends(get_engagement),
+    session: AsyncSession = Depends(get_session),
+):
     rows = await session.scalars(
-        select(ScanJob).where(ScanJob.engagement_id == eng.id)
+        select(ScanJob)
+        .where(ScanJob.engagement_id == eng.id)
         .order_by(ScanJob.created_at.desc())
     )
     return list(rows)
@@ -90,10 +103,12 @@ async def job_updates(websocket: WebSocket, engagement_id: uuid.UUID):
                 .where(ScanJob.engagement_id == engagement_id)
                 .order_by(ScanJob.created_at.desc())
             )
-            await websocket.send_json({
-                "type": "jobs.snapshot",
-                "jobs": [job_payload(job) for job in rows],
-            })
+            await websocket.send_json(
+                {
+                    "type": "jobs.snapshot",
+                    "jobs": [job_payload(job) for job in rows],
+                }
+            )
 
         while True:
             await websocket.receive_text()
@@ -139,29 +154,43 @@ async def _claim_job(job_id: uuid.UUID, session: AsyncSession) -> ScanJob:
 async def _run_in_background(job_id: uuid.UUID) -> None:
     """Run a job in its own session (used by BackgroundTasks)."""
     async with SessionFactory() as session:
+        enricher = build_enricher()
         try:
             await ScanRunner(
-                session, status_callback=job_event_hub.publish_job
+                session,
+                enricher=enricher,
+                status_callback=job_event_hub.publish_job,
             ).run_job(job_id)
         except Exception:
             await session.rollback()
+        finally:
+            enricher.close()
 
 
 @router.post("/jobs/{job_id}/run", response_model=ScanJobOut)
-async def run_job(job_id: uuid.UUID, background: BackgroundTasks,
-                  wait: bool = False, session: AsyncSession = Depends(get_session)):
+async def run_job(
+    job_id: uuid.UUID,
+    background: BackgroundTasks,
+    wait: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
     """Execute a pending job. ``wait=true`` runs inline (handy for small jobs
     and tests); otherwise it's scheduled as a background task and returns
     immediately with the job in its current state."""
     job = await _claim_job(job_id, session)
     if wait:
+        enricher = build_enricher()
         try:
             return await ScanRunner(
-                session, status_callback=job_event_hub.publish_job
+                session,
+                enricher=enricher,
+                status_callback=job_event_hub.publish_job,
             ).run_job(job_id)
         except Exception as exc:
             raise HTTPException(
                 status.HTTP_500_INTERNAL_SERVER_ERROR, "job execution failed"
             ) from exc
+        finally:
+            enricher.close()
     background.add_task(_run_in_background, job_id)
     return job

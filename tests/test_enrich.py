@@ -1,4 +1,5 @@
 """Tests for enrichment: IP classification, GeoIP (fake reader), TLS parsing."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,9 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from app.config import Settings
+from app.enrich import factory
+from app.enrich.factory import build_enricher
 from app.enrich.geoip import GeoIPEnricher
 from app.enrich.netclass import classify_ip
 from app.enrich.service import Enricher
@@ -20,6 +24,7 @@ from app.enrich.tls import fetch_tls_cert, parse_certificate
 
 
 # --- netclass ---------------------------------------------------------------
+
 
 def test_classify_private():
     c = classify_ip("10.1.2.3")
@@ -44,12 +49,20 @@ def test_classify_ipv6_ula():
 
 # --- geoip with a fake reader ----------------------------------------------
 
+
 class _FakeCity:
     def city(self, ip):
         class R:
-            class country: iso_code = "UA"
-            class city: name = "Kyiv"
-            class location: latitude = 50.45; longitude = 30.52
+            class country:
+                iso_code = "UA"
+
+            class city:
+                name = "Kyiv"
+
+            class location:
+                latitude = 50.45
+                longitude = 30.52
+
         return R()
 
 
@@ -58,6 +71,7 @@ class _FakeASN:
         class R:
             autonomous_system_number = 13335
             autonomous_system_organization = "CLOUDFLARENET"
+
         return R()
 
 
@@ -88,25 +102,61 @@ def test_enricher_geoip_for_global():
     assert enr.country == "UA" and enr.asn == 13335
 
 
+def test_build_enricher_uses_configured_geoip_paths(monkeypatch):
+    opened_paths = []
+
+    def fake_open_reader(path: str | None):
+        opened_paths.append(path)
+        if path is None:
+            return None
+        if path.endswith("City.mmdb"):
+            return _FakeCity()
+        if path.endswith("ASN.mmdb"):
+            return _FakeASN()
+        return None
+
+    monkeypatch.setattr(factory, "_open_reader", fake_open_reader)
+
+    enricher = build_enricher(
+        Settings(
+            geoip_city_db="/geoip/GeoLite2-City.mmdb",
+            geoip_asn_db="/geoip/GeoLite2-ASN.mmdb",
+        )
+    )
+    enr = enricher.enrich_host("1.1.1.1")
+
+    assert enr.country == "UA" and enr.city == "Kyiv"
+    assert enr.asn == 13335 and enr.as_org == "CLOUDFLARENET"
+    assert opened_paths == [
+        "/geoip/GeoLite2-City.mmdb",
+        "/geoip/GeoLite2-ASN.mmdb",
+    ]
+
+
 # --- TLS parsing against a real self-signed cert ---------------------------
+
 
 def _make_self_signed(tmp: Path) -> tuple[Path, Path]:
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([
-        x509.NameAttribute(NameOID.COMMON_NAME, "recon.test"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "ReconHive Test"),
-    ])
+    subject = issuer = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COMMON_NAME, "recon.test"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "ReconHive Test"),
+        ]
+    )
     now = dt.datetime.now(dt.timezone.utc)
     cert = (
         x509.CertificateBuilder()
-        .subject_name(subject).issuer_name(issuer)
+        .subject_name(subject)
+        .issuer_name(issuer)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - dt.timedelta(days=1))
         .not_valid_after(now + dt.timedelta(days=90))
         .add_extension(
-            x509.SubjectAlternativeName([x509.DNSName("recon.test"),
-                                         x509.DNSName("www.recon.test")]),
+            x509.SubjectAlternativeName(
+                [x509.DNSName("recon.test"), x509.DNSName("www.recon.test")]
+            ),
             critical=False,
         )
         .sign(key, hashes.SHA256())
@@ -114,11 +164,13 @@ def _make_self_signed(tmp: Path) -> tuple[Path, Path]:
     cert_path = tmp / "cert.pem"
     key_path = tmp / "key.pem"
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(key.private_bytes(
-        serialization.Encoding.PEM,
-        serialization.PrivateFormat.TraditionalOpenSSL,
-        serialization.NoEncryption(),
-    ))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
     return cert_path, key_path
 
 
