@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.mmdb
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+.venv/
+.ruff_cache/
+
+

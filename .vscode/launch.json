@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "API: uvicorn",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.api.app:app", "--reload", "--port", "8000"],
+      "jinja": true,
+      "justMyCode": true,
+      "env": {
+        "RECONHIVE_DATABASE_URL": "postgresql+asyncpg://reconhive:reconhive@localhost:5432/reconhive"
+      }
+    },
+    {
+      "name": "API: uvicorn (docker db)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": ["app.api.app:app", "--reload", "--port", "8000"],
+      "jinja": true,
+      "justMyCode": false,
+      "env": {
+        "RECONHIVE_DATABASE_URL": "postgresql+asyncpg://reconhive:reconhive@localhost:5432/reconhive"
+      }
+    },
+    {
+      "name": "Tests: all",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["tests/", "-v"],
+      "justMyCode": true,
+      "env": {
+        "RECONHIVE_DATABASE_URL": "postgresql+asyncpg://reconhive:reconhive@localhost:5432/reconhive"
+      }
+    },
+    {
+      "name": "Tests: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "justMyCode": true,
+      "env": {
+        "RECONHIVE_DATABASE_URL": "postgresql+asyncpg://reconhive:reconhive@localhost:5432/reconhive"
+      }
+    }
+  ]
+}
